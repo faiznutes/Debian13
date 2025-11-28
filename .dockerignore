@@ -1,0 +1,88 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Scripts (kecuali yang diperlukan)
+*.sh
+!scripts/docker-startup.sh
+!deploy-vps.sh
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# Node modules (akan diinstall di container)
+node_modules/
+**/node_modules/
+
+# Build outputs (akan di-build di container)
+dist/
+build/
+**/dist/
+**/build/
+
+# Testing
+coverage/
+.nyc_output/
+tests/
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+.temp/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker
+docker-compose.override.yml
+Dockerfile*
+!Dockerfile.backend
+
+# Database (tidak perlu di-copy)
+*.db
+*.sqlite
+postgres_data/
+redis_data/
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+
+# Client build (akan di-build di container)
+client/dist/
+client/.vite/
+client/node_modules/
+
+# Nginx logs
+nginx/logs/
+nginx/ssl/
+
+# Monitoring
+monitoring/
+

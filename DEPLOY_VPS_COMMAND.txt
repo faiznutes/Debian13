@@ -1,0 +1,92 @@
+# ============================================
+# COMMAND UNTUK DEPLOY DI VPS
+# Copy-paste command ini di terminal VPS Anda
+# ============================================
+
+# OPTION 1: Quick Deploy (Satu Baris)
+# ============================================
+ssh warungin@192.168.0.102 'cd /home/warungin/Warungin && git pull origin main && docker compose down && docker compose up -d --build && sleep 20 && docker compose ps'
+
+# OPTION 2: Step by Step (Recommended)
+# ============================================
+# 1. Connect ke VPS
+ssh warungin@192.168.0.102
+
+# 2. Masuk ke directory project
+cd /home/warungin/Warungin
+
+# 3. Pull latest code dari GitHub
+git pull origin main
+
+# 4. Stop container yang berjalan (jika ada)
+docker compose down
+
+# 5. Build dan start semua services
+docker compose up -d --build
+
+# 6. Tunggu beberapa detik untuk services start
+sleep 20
+
+# 7. Cek status services
+docker compose ps
+
+# 8. Setup firewall (jika belum)
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw allow 22/tcp
+
+# 9. Start Cloudflare tunnel (jika dikonfigurasi)
+# Pastikan CLOUDFLARE_TUNNEL_TOKEN sudah di-set di .env
+docker compose --profile cloudflare up -d cloudflared
+
+# 10. Cek logs (opsional)
+docker compose logs -f
+
+# ============================================
+# SETUP PUBLIC ACCESS (Cloudflare Tunnel)
+# ============================================
+# 1. Setup tunnel di Cloudflare Dashboard
+# 2. Copy TUNNEL_TOKEN
+# 3. Edit .env di VPS:
+nano /home/warungin/Warungin/.env
+
+# 4. Tambahkan:
+CLOUDFLARE_TUNNEL_TOKEN=your_token_here
+
+# 5. Start tunnel:
+cd /home/warungin/Warungin
+docker compose --profile cloudflare up -d cloudflared
+
+# ============================================
+# TROUBLESHOOTING
+# ============================================
+# Cek logs semua services
+docker compose logs -f
+
+# Cek logs service tertentu
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose logs -f nginx
+
+# Restart services
+docker compose restart
+
+# Rebuild service tertentu
+docker compose up -d --build backend
+docker compose up -d --build frontend
+
+# Health check
+curl http://192.168.0.102/api/health
+
+# ============================================
+# INFORMASI AKSES
+# ============================================
+# Frontend: http://192.168.0.102
+# Backend API: http://192.168.0.102/api
+# Health Check: http://192.168.0.102/api/health
+
+# Default Credentials:
+# Email: admin@warungin.com
+# Password: admin123
+# ⚠️ PENTING: Ganti password default setelah login pertama!
+

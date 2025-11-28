@@ -1,0 +1,7 @@
+Contact: mailto:support@warungin.com
+Expires: 2026-12-31T23:59:59.000Z
+Preferred-Languages: id, en
+Canonical: https://warungin.com/.well-known/security.txt
+Policy: https://warungin.com/security-policy
+Acknowledgments: https://warungin.com/security-acknowledgments
+

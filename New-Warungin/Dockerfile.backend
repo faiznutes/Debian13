@@ -1,0 +1,89 @@
+# Backend Dockerfile
+FROM node:18-alpine AS backend-builder
+
+WORKDIR /app
+
+# Configure npm for better network handling
+RUN npm config set fetch-timeout 300000 && \
+    npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000
+
+# Copy package files
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# Install dependencies
+# Skip npm ci (causing issues), use npm install directly with retry logic
+RUN npm install --legacy-peer-deps || \
+    (echo "First attempt failed, retrying..." && sleep 10 && npm install --legacy-peer-deps) || \
+    (echo "Second attempt failed, retrying..." && sleep 20 && npm install --legacy-peer-deps) || \
+    (echo "Third attempt, using npm install without legacy-peer-deps..." && sleep 30 && npm install)
+
+# Copy source code
+COPY src ./src
+COPY prisma ./prisma
+COPY scripts ./scripts
+
+# Generate Prisma client with retry logic
+RUN npx prisma generate || \
+    (sleep 10 && npx prisma generate) || \
+    (sleep 20 && npx prisma generate) || \
+    (npm cache clean --force && npx prisma generate)
+
+# Build TypeScript
+RUN npm run build
+
+# Production stage
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Configure npm for better network handling
+RUN npm config set fetch-timeout 300000 && \
+    npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000
+
+# Install dumb-init and wget for proper signal handling and healthcheck
+RUN apk add --no-cache dumb-init wget
+
+# Copy package files
+COPY package*.json ./
+
+# Install production dependencies only
+# Skip npm ci, use npm install directly with retry logic
+RUN npm install --omit=dev --legacy-peer-deps || \
+    (echo "First attempt failed, retrying..." && sleep 10 && npm install --omit=dev --legacy-peer-deps) || \
+    (echo "Second attempt failed, retrying..." && sleep 20 && npm install --omit=dev --legacy-peer-deps) || \
+    (echo "Third attempt, using npm install without legacy-peer-deps..." && sleep 30 && npm install --omit=dev)
+
+# Copy built files
+COPY --from=backend-builder /app/dist ./dist
+COPY --from=backend-builder /app/prisma ./prisma
+COPY --from=backend-builder /app/scripts ./scripts
+COPY --from=backend-builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=backend-builder /app/node_modules/@prisma ./node_modules/@prisma
+
+# Copy startup script and make it executable
+COPY scripts/docker-startup.sh /app/scripts/docker-startup.sh
+RUN chmod +x /app/scripts/docker-startup.sh
+
+# Create logs directory
+RUN mkdir -p /app/logs
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
+
+# Change ownership
+RUN chown -R nodejs:nodejs /app
+
+USER nodejs
+
+EXPOSE 3000
+
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["/app/scripts/docker-startup.sh"]
+

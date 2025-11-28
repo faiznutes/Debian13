@@ -1,0 +1,1172 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Tenant Model (Multi-tenant architecture)
+model Tenant {
+  id                String    @id @default(uuid())
+  name              String
+  slug              String    @unique
+  email             String    @unique
+  phone             String?
+  address           String?
+  isActive          Boolean   @default(true)
+  subscriptionStart DateTime?
+  subscriptionEnd   DateTime?
+  subscriptionPlan  String? // BASIC, PRO, ENTERPRISE
+  previousPlan      String? // untuk revert
+  temporaryUpgrade  Boolean   @default(false)
+  features          Json? // cache aktif fitur saat ini
+  tenantsActive     Int       @default(1)
+  tenantsLimit      Int       @default(1)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  users               User[]
+  products            Product[]
+  orders              Order[]
+  transactions        Transaction[]
+  customers           Customer[]
+  members             Member[]
+  employees           Employee[]
+  outlets             Outlet[]
+  reports             Report[]
+  addons              TenantAddon[]
+  subscriptions       Subscription[]
+  subscriptionHistory SubscriptionHistory[]
+  receiptTemplates    ReceiptTemplate[]
+  discounts           Discount[]
+  paymentMappings     PaymentMapping[]
+  rewardPoints        RewardPoint[]
+  productAdjustments  ProductAdjustment[]
+  auditLogs           AuditLog[]
+  webhooks            Webhook[]
+  emailTemplates      EmailTemplate[]
+  emailEvents         EmailEvent[]
+  scheduledEmails     ScheduledEmail[]
+  suppliers           Supplier[]
+  purchaseOrders      PurchaseOrder[]
+  stockTransfers      StockTransfer[]
+  stockValuations     StockValuation[]
+  reportTemplates     ReportTemplate[]
+  scheduledReports    ScheduledReport[]
+  dashboardSettings   DashboardSettings[]
+  cashFlows           CashFlow[]
+  expenses            Expense[]
+  taxCalculations     TaxCalculation[]
+  financialForecasts   FinancialForecast[]
+  bankReconciliations BankReconciliation[]
+  customerFeedbacks   CustomerFeedback[]
+  customerReviews     CustomerReview[]
+
+  @@map("tenants")
+}
+
+// User Model
+model User {
+  id              String    @id @default(uuid())
+  tenantId        String
+  email           String
+  password        String
+  defaultPassword String? // Store default password (plaintext) for Super Admin to view
+  name            String
+  role            UserRole  @default(CASHIER)
+  isActive        Boolean   @default(true)
+  permissions     Json? // Store user-specific permissions (e.g., canEditOrders, canDeleteOrders, canEditReports, etc.)
+  lastLogin       DateTime?
+  twoFactorEnabled Boolean  @default(false)
+  twoFactorSecret  String?
+  twoFactorBackupCodes String? // JSON array of hashed backup codes
+  passwordHistory String? // JSON array of previous passwords (hashed)
+  passwordChangedAt DateTime?
+  mustChangePassword Boolean @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders       Order[]
+  transactions Transaction[]
+  rewardPoints RewardPoint[] @relation("UserRewardPoints")
+  productAdjustments ProductAdjustment[]
+  auditLogs    AuditLog[]
+  dashboardSettings DashboardSettings[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN_TENANT
+  SUPERVISOR
+  CASHIER
+  KITCHEN
+}
+
+// Product Model
+model Product {
+  id            String   @id @default(uuid())
+  tenantId      String
+  name          String
+  description   String?
+  sku           String?
+  barcode       String?
+  price         Decimal  @db.Decimal(10, 2)
+  cost          Decimal? @db.Decimal(10, 2) // Harga pokok/beli (untuk produk titipan)
+  stock         Int      @default(0)
+  minStock      Int      @default(0)
+  category      String?
+  image         String?
+  emoji         String?
+  isActive      Boolean  @default(true)
+  isConsignment Boolean  @default(false) // Produk titipan dari orang lain
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+  adjustments ProductAdjustment[]
+  purchaseOrderItems PurchaseOrderItem[]
+  stockTransferItems StockTransferItem[]
+  stockValuations StockValuation[]
+  reviews CustomerReview[]
+
+  @@index([tenantId])
+  @@index([tenantId, sku])
+  @@index([tenantId, isConsignment])
+  @@index([tenantId, category, isActive])
+  @@index([tenantId, isActive])
+  @@index([tenantId, name])
+  @@map("products")
+}
+
+// Product Adjustment Model (for tracking stock adjustments)
+model ProductAdjustment {
+  id        String   @id @default(uuid())
+  tenantId  String
+  productId String
+  userId    String   // User who made the adjustment
+  type      String   // INCREASE, DECREASE
+  quantity  Int      // Amount adjusted
+  reason    String   // Reason for adjustment
+  stockBefore Int    // Stock before adjustment
+  stockAfter  Int    // Stock after adjustment
+  createdAt DateTime @default(now())
+
+  // Relations
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, productId])
+  @@index([tenantId, createdAt])
+  @@map("product_adjustments")
+}
+
+// Order Model
+model Order {
+  id                    String      @id @default(uuid())
+  tenantId              String
+  orderNumber           String      @unique
+  userId                String
+  customerId            String?
+  memberId              String? // For member orders (temporary customer name stored in memberId as JSON)
+  outletId              String?
+  total                 Decimal     @db.Decimal(10, 2)
+  discount              Decimal     @default(0) @db.Decimal(10, 2)
+  subtotal              Decimal     @db.Decimal(10, 2)
+  status                OrderStatus @default(PENDING)
+  sendToKitchen         Boolean     @default(false)
+  kitchenStatus         String? // PENDING, PROCESSING, READY, COMPLETED
+  temporaryCustomerName String? // Temporary customer name (not saved to DB)
+  notes                 String?
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+
+  // Relations
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id])
+  customer    Customer?    @relation(fields: [customerId], references: [id])
+  member      Member?      @relation(fields: [memberId], references: [id])
+  outlet      Outlet?      @relation(fields: [outletId], references: [id])
+  items       OrderItem[]
+  transaction Transaction?
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, sendToKitchen])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, status, createdAt(sort: Desc)])
+  @@index([tenantId, customerId])
+  @@index([tenantId, outletId])
+  @@map("orders")
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+// Order Item Model
+model OrderItem {
+  id        String   @id @default(uuid())
+  orderId   String
+  productId String
+  quantity  Int
+  price     Decimal  @db.Decimal(10, 2) // Harga jual
+  cost      Decimal? @db.Decimal(10, 2) // Harga pokok (untuk hitung profit)
+  subtotal  Decimal  @db.Decimal(10, 2)
+  profit    Decimal? @db.Decimal(10, 2) // Profit = (price - cost) * quantity
+  createdAt DateTime @default(now())
+
+  // Relations
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([productId, orderId])
+  @@map("order_items")
+}
+
+// Payment Mapping Model (for Midtrans orderId -> tenantId/itemId mapping)
+model PaymentMapping {
+  id        String   @id @default(uuid())
+  orderId   String   @unique // Midtrans order_id (short format)
+  tenantId  String
+  itemId    String
+  itemType  String // 'addon' or 'subscription'
+  itemName  String?
+  amount    Decimal  @db.Decimal(10, 2)
+  status    String   @default("PENDING") // PENDING, SETTLED, CANCELLED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([tenantId])
+  @@map("payment_mappings")
+}
+
+// Transaction Model
+model Transaction {
+  id            String            @id @default(uuid())
+  tenantId      String
+  orderId       String            @unique
+  userId        String
+  amount        Decimal           @db.Decimal(10, 2)
+  paymentMethod PaymentMethod
+  status        TransactionStatus @default(PENDING)
+  reference     String? // Reference number (untuk bank transfer, dll)
+  qrCode        String? // QR Code string untuk QRIS manual
+  qrCodeImage   String? // URL gambar QR Code (opsional)
+  notes         String?
+  servedBy      String? // Nama kasir/admin yang melayani (untuk receipt)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, paymentMethod, createdAt(sort: Desc)])
+  @@index([tenantId, userId])
+  @@map("transactions")
+}
+
+enum PaymentMethod {
+  CASH
+  QRIS
+  CARD
+  E_WALLET
+  BANK_TRANSFER
+  SHOPEEPAY
+  DANA
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// Customer Model (Walk-in customers)
+model Customer {
+  id            String   @id @default(uuid())
+  tenantId      String
+  name          String
+  email         String?
+  phone         String?
+  address       String?
+  birthday      DateTime? // For birthday reminders
+  loyaltyPoints Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders Order[]
+  feedbacks CustomerFeedback[]
+  reviews CustomerReview[]
+
+  @@index([tenantId])
+  @@index([tenantId, phone])
+  @@index([tenantId, name])
+  @@index([tenantId, email])
+  @@map("customers")
+}
+
+// Member Model (Registered members with special discounts)
+model Member {
+  id            String   @id @default(uuid())
+  tenantId      String
+  name          String
+  email         String?
+  phone         String   @unique
+  address       String?
+  memberCode    String   @unique
+  discountType  String? // PERCENTAGE, FIXED
+  discountValue Decimal? @db.Decimal(10, 2)
+  isActive      Boolean  @default(true)
+  loyaltyPoints Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@index([tenantId])
+  @@index([tenantId, phone])
+  @@index([tenantId, memberCode])
+  @@map("members")
+}
+
+// Employee Model
+model Employee {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  email     String
+  phone     String?
+  position  String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("employees")
+}
+
+// Outlet Model
+model Outlet {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  address   String?
+  phone     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@index([tenantId])
+  @@map("outlets")
+}
+
+// Report Model (for scheduled reports)
+model Report {
+  id        String   @id @default(uuid())
+  tenantId  String
+  type      String
+  period    String
+  data      Json
+  createdAt DateTime @default(now())
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("reports")
+}
+
+// Tenant Addon Model
+model TenantAddon {
+  id           String    @id @default(uuid())
+  tenantId     String
+  addonId      String
+  addonName    String
+  addonType    String // ADD_USERS, ADD_PRODUCTS, ADD_OUTLETS, E_COMMERCE, etc.
+  status       String    @default("active")
+  limit        Int? // Limit for this addon (e.g., 100 products, 5 users)
+  currentUsage Int       @default(0) // Current usage count
+  subscribedAt DateTime  @default(now())
+  expiresAt    DateTime?
+  config       Json?
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, addonId])
+  @@index([tenantId])
+  @@index([tenantId, addonType])
+  @@map("tenant_addons")
+}
+
+// Subscription Model (for subscription history)
+model Subscription {
+  id               String   @id @default(uuid())
+  tenantId         String
+  plan             String // BASIC, PRO, ENTERPRISE
+  startDate        DateTime
+  endDate          DateTime
+  status           String // ACTIVE, EXPIRED, CANCELLED
+  amount           Decimal  @db.Decimal(10, 2)
+  temporaryUpgrade Boolean  @default(false) // true jika upgrade sementara 1 bulan
+  previousPlan     String? // Plan sebelumnya (untuk revert)
+  createdAt        DateTime @default(now())
+
+  // Relations
+  tenant  Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  history SubscriptionHistory[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, temporaryUpgrade])
+  @@map("subscriptions")
+}
+
+// Subscription History Model (untuk tracking perubahan plan)
+model SubscriptionHistory {
+  id             String   @id @default(uuid())
+  subscriptionId String?
+  tenantId       String
+  planType       String // BASIC, PRO, ENTERPRISE
+  startDate      DateTime
+  endDate        DateTime
+  price          Decimal  @db.Decimal(10, 2)
+  durationDays   Int
+  isTemporary    Boolean  @default(false)
+  reverted       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  // Relations
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, reverted])
+  @@map("subscription_history")
+}
+
+// Receipt Template Model
+model ReceiptTemplate {
+  id           String   @id @default(uuid())
+  tenantId     String
+  name         String
+  templateType String // DEFAULT, MODERN, MINIMAL, DETAILED, COMPACT
+  isDefault    Boolean  @default(false)
+  paperSize    String   @default("A4") // A4, THERMAL_58, THERMAL_80
+  header       Json?
+  footer       Json?
+  fields       Json? // Which fields to show
+  styles       Json? // CSS styles
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("receipt_templates")
+}
+
+// Discount Model (Sistem Diskon Otomatis)
+model Discount {
+  id                    String    @id @default(uuid())
+  tenantId              String
+  name                  String // Nama diskon (contoh: "Beli 1 50rb Diskon 20%")
+  discountType          String // AMOUNT_BASED, BUNDLE, PRODUCT_BASED
+  discountValue         Decimal   @db.Decimal(10, 2) // Nilai diskon (persen atau nominal)
+  discountValueType     String // PERCENTAGE, FIXED
+  minAmount             Decimal?  @db.Decimal(10, 2) // Minimum total pembelian (untuk AMOUNT_BASED)
+  minQuantity           Int? // Minimum quantity (untuk AMOUNT_BASED)
+  applicableProducts    Json? // Array product IDs yang dapat diskon (null = semua produk)
+  bundleProducts        Json? // Array product IDs untuk bundle (contoh: [productA, productB])
+  bundleDiscountProduct String? // Product ID yang mendapat diskon dalam bundle (contoh: hanya productA)
+  applicableTo          String   @default("ALL") // ALL, MEMBER_ONLY - Berlaku untuk semua atau hanya member
+  isActive              Boolean   @default(true)
+  startDate             DateTime?
+  endDate               DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@map("discounts")
+}
+
+// Reward Points Model
+model RewardPoint {
+  id            String   @id @default(uuid())
+  tenantId      String
+  userId        String?  // Optional: bisa per user atau per tenant
+  currentPoints Int      @default(0)
+  totalEarned   Int      @default(0)
+  totalSpent    Int      @default(0)
+  lastEarnedAt  DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation("UserRewardPoints", fields: [userId], references: [id], onDelete: SetNull)
+  transactions RewardPointTransaction[]
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+  @@index([userId])
+  @@map("reward_points")
+}
+
+// Reward Point Transactions (History)
+model RewardPointTransaction {
+  id            String   @id @default(uuid())
+  rewardPointId String
+  type          String   // EARNED, SPENT, EXPIRED, ADJUSTED
+  amount        Int      // Positive for earned, negative for spent
+  source        String   // AD_VIEW, SUBSCRIPTION_REDEEM, ADDON_REDEEM, MANUAL_ADJUST
+  description   String?
+  metadata      Json?    // Store additional info (ad ID, subscription ID, etc.)
+  createdAt     DateTime @default(now())
+
+  // Relations
+  rewardPoint RewardPoint @relation(fields: [rewardPointId], references: [id], onDelete: Cascade)
+
+  @@index([rewardPointId])
+  @@index([createdAt])
+  @@map("reward_point_transactions")
+}
+
+// Daily Ad View Tracking (untuk limit 5 iklan/hari)
+model DailyAdView {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String?
+  date      DateTime @db.Date
+  viewCount Int      @default(0)
+  lastViewAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, userId, date])
+  @@index([tenantId, date])
+  @@map("daily_ad_views")
+}
+
+// Contact Submission Model
+model ContactSubmission {
+  id        String   @id @default(uuid())
+  name      String
+  email     String
+  subject   String
+  message   String
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([createdAt])
+  @@map("contact_submissions")
+}
+
+// Demo Request Model
+model DemoRequest {
+  id           String    @id @default(uuid())
+  name         String
+  email        String
+  businessName String
+  phone        String
+  dateTime     DateTime?
+  message      String?
+  createdAt    DateTime  @default(now())
+
+  @@index([email])
+  @@index([createdAt])
+  @@map("demo_requests")
+}
+
+// Audit Log Model (for tracking all user actions and system changes)
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String?  // Optional: null untuk system-level actions
+  userId    String?  // Optional: null untuk system actions
+  userEmail String?  // Store email untuk reference (jika user dihapus)
+  userName  String?  // Store name untuk reference (jika user dihapus)
+  action    String   // CREATE, UPDATE, DELETE, LOGIN, LOGOUT, VIEW, etc.
+  resource  String   // products, orders, users, tenants, etc.
+  resourceId String? // ID dari resource yang diubah
+  details   Json?    // Additional details (old values, new values, etc.)
+  ipAddress String?  // IP address dari request
+  userAgent String?  // User agent dari request
+  status    String   @default("SUCCESS") // SUCCESS, FAILED, ERROR
+  errorMessage String? // Error message jika status FAILED/ERROR
+  createdAt DateTime @default(now())
+
+  // Relations
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}
+
+// Webhook Model
+model Webhook {
+  id          String   @id @default(uuid())
+  tenantId    String
+  url         String
+  events      String[] // Array of event types
+  secret      String   // Secret for signature verification
+  isActive    Boolean  @default(true)
+  retryCount  Int      @default(3)
+  timeout    Int      @default(5000) // milliseconds
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId])
+  @@index([isActive])
+  @@map("webhooks")
+}
+
+// Webhook Delivery Model
+model WebhookDelivery {
+  id          String   @id @default(uuid())
+  webhookId   String
+  event       String
+  payload     Json
+  status      String   // PENDING, SUCCESS, FAILED
+  responseCode Int?
+  responseBody String?
+  attempts    Int      @default(0)
+  nextRetryAt DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime @default(now())
+
+  // Relations
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId])
+  @@index([status])
+  @@index([nextRetryAt])
+  @@map("webhook_deliveries")
+}
+
+// Email Template Model
+model EmailTemplate {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  subject     String
+  htmlContent String   @db.Text
+  textContent String?  @db.Text
+  variables   String[] // Available variables like {{name}}, {{email}}, etc.
+  category    String   @default("PROMOTION") // PROMOTION, NOTIFICATION, TRANSACTIONAL
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, category])
+  @@index([tenantId, isActive])
+  @@map("email_templates")
+}
+
+// Email Event Model (for tracking opens, clicks, etc.)
+model EmailEvent {
+  id         String   @id @default(uuid())
+  tenantId   String
+  campaignId String?  // Optional: link to campaign if available
+  email      String
+  eventType  String   // SENT, OPENED, CLICKED, BOUNCED, UNSUBSCRIBED
+  linkUrl    String?  // For click events
+  metadata   Json?    // Additional event data
+  createdAt  DateTime @default(now())
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([campaignId])
+  @@index([email])
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([tenantId, campaignId])
+  @@index([tenantId, eventType, createdAt])
+  @@map("email_events")
+}
+
+// Scheduled Email Model
+model ScheduledEmail {
+  id         String   @id @default(uuid())
+  tenantId   String
+  campaignId String
+  scheduledAt DateTime
+  target     String   // ALL, MEMBERS, ACTIVE, INACTIVE
+  subject    String
+  content    String   @db.Text
+  templateId String?  // Optional: link to email template
+  status     String   @default("PENDING") // PENDING, SENT, CANCELLED, FAILED
+  sentAt     DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([tenantId, status])
+  @@index([tenantId, scheduledAt])
+  @@map("scheduled_emails")
+}
+
+// Supplier Model
+model Supplier {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  email       String?
+  phone       String?
+  address     String?
+  contactPerson String?
+  notes       String?  @db.Text
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[]
+
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@map("suppliers")
+}
+
+// Purchase Order Model
+model PurchaseOrder {
+  id            String   @id @default(uuid())
+  tenantId      String
+  supplierId    String
+  orderNumber   String   @unique
+  status        String   @default("PENDING") // PENDING, APPROVED, ORDERED, RECEIVED, CANCELLED
+  orderDate     DateTime @default(now())
+  expectedDate  DateTime?
+  receivedDate  DateTime?
+  totalAmount   Decimal  @db.Decimal(10, 2)
+  notes         String?  @db.Text
+  createdBy     String   // User ID
+  approvedBy    String?  // User ID
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supplier      Supplier            @relation(fields: [supplierId], references: [id])
+  items         PurchaseOrderItem[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, supplierId])
+  @@index([orderNumber])
+  @@map("purchase_orders")
+}
+
+// Purchase Order Item Model
+model PurchaseOrderItem {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  productId       String
+  quantity        Int
+  unitPrice       Decimal       @db.Decimal(10, 2)
+  totalPrice      Decimal       @db.Decimal(10, 2)
+  receivedQuantity Int          @default(0)
+  notes           String?       @db.Text
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id])
+
+  @@index([purchaseOrderId])
+  @@index([productId])
+  @@map("purchase_order_items")
+}
+
+// Stock Transfer Model (transfer antar outlet)
+model StockTransfer {
+  id            String   @id @default(uuid())
+  tenantId      String
+  fromOutletId  String
+  toOutletId    String
+  transferNumber String  @unique
+  status        String   @default("PENDING") // PENDING, IN_TRANSIT, COMPLETED, CANCELLED
+  transferDate  DateTime @default(now())
+  receivedDate  DateTime?
+  notes         String?  @db.Text
+  createdBy     String   // User ID
+  receivedBy    String?  // User ID
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items         StockTransferItem[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, fromOutletId])
+  @@index([tenantId, toOutletId])
+  @@index([transferNumber])
+  @@map("stock_transfers")
+}
+
+// Stock Transfer Item Model
+model StockTransferItem {
+  id              String        @id @default(uuid())
+  stockTransferId String
+  productId       String
+  quantity        Int
+  receivedQuantity Int          @default(0)
+  notes           String?       @db.Text
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  stockTransfer StockTransfer @relation(fields: [stockTransferId], references: [id], onDelete: Cascade)
+  product      Product       @relation(fields: [productId], references: [id])
+
+  @@index([stockTransferId])
+  @@index([productId])
+  @@map("stock_transfer_items")
+}
+
+// Stock Valuation Model (untuk tracking FIFO, LIFO, Average Cost)
+model StockValuation {
+  id            String   @id @default(uuid())
+  tenantId      String
+  productId     String
+  valuationType String   // FIFO, LIFO, AVERAGE
+  quantity      Int
+  unitCost      Decimal  @db.Decimal(10, 2)
+  totalCost     Decimal  @db.Decimal(10, 2)
+  purchaseDate  DateTime
+  purchaseOrderId String? // Link to purchase order if applicable
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product       Product  @relation(fields: [productId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, productId])
+  @@index([tenantId, valuationType])
+  @@map("stock_valuations")
+}
+
+// Report Template Model (Advanced Reporting)
+model ReportTemplate {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?  @db.Text
+  type        String   // SALES, INVENTORY, FINANCIAL, CUSTOMER, CUSTOM
+  config      Json     // Columns, filters, grouping, sorting configuration
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scheduledReports ScheduledReport[]
+
+  @@index([tenantId])
+  @@index([tenantId, type])
+  @@index([tenantId, isActive])
+  @@map("report_templates")
+}
+
+// Scheduled Report Model (Advanced Reporting)
+model ScheduledReport {
+  id          String   @id @default(uuid())
+  tenantId    String
+  templateId  String
+  name        String
+  schedule    String   // DAILY, WEEKLY, MONTHLY, CUSTOM
+  scheduleConfig Json  // Cron expression or schedule config
+  format      String   // PDF, EXCEL, CSV, HTML
+  recipients  String[] // Array of email addresses
+  isActive    Boolean  @default(true)
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  template ReportTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@index([nextRunAt])
+  @@index([tenantId, nextRunAt])
+  @@map("scheduled_reports")
+}
+
+// Dashboard Settings Model (Advanced Reporting)
+model DashboardSettings {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String?  // Optional: per-user customization
+  layout    Json     // Widget layout configuration
+  widgets   Json     // Selected widgets and their positions
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([tenantId])
+  @@index([userId])
+  @@map("dashboard_settings")
+}
+
+// Cash Flow Model (Financial Management)
+model CashFlow {
+  id            String   @id @default(uuid())
+  tenantId      String
+  type          String   // INCOME, EXPENSE
+  category      String
+  amount        Decimal  @db.Decimal(10, 2)
+  description   String?  @db.Text
+  date          DateTime
+  paymentMethod String
+  reference     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, type])
+  @@index([tenantId, date])
+  @@index([tenantId, category])
+  @@map("cash_flows")
+}
+
+// Expense Model (Financial Management)
+model Expense {
+  id              String   @id @default(uuid())
+  tenantId        String
+  category        String
+  amount          Decimal  @db.Decimal(10, 2)
+  description     String?  @db.Text
+  date            DateTime
+  vendor          String?
+  receipt         String?  // Receipt file path or URL
+  isTaxDeductible Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, category])
+  @@index([tenantId, date])
+  @@index([tenantId, isTaxDeductible])
+  @@map("expenses")
+}
+
+// Tax Calculation Model (Financial Management)
+model TaxCalculation {
+  id            String   @id @default(uuid())
+  tenantId      String
+  period        String   // YYYY-MM format
+  totalRevenue  Decimal  @db.Decimal(10, 2)
+  totalExpenses Decimal  @db.Decimal(10, 2)
+  taxableIncome Decimal  @db.Decimal(10, 2)
+  taxRate       Decimal  @db.Decimal(5, 4) // e.g., 0.11 for 11%
+  taxAmount     Decimal  @db.Decimal(10, 2)
+  calculatedAt  DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, period])
+  @@index([tenantId])
+  @@index([tenantId, period])
+  @@map("tax_calculations")
+}
+
+// Financial Forecast Model (Financial Management)
+model FinancialForecast {
+  id                String   @id @default(uuid())
+  tenantId           String
+  month              String   // YYYY-MM format
+  projectedRevenue   Decimal  @db.Decimal(10, 2)
+  projectedExpenses  Decimal  @db.Decimal(10, 2)
+  projectedProfit    Decimal  @db.Decimal(10, 2)
+  confidence         Decimal  @db.Decimal(5, 4) // 0.0 to 1.0
+  growthRate         Decimal  @db.Decimal(5, 4)
+  trend              String   // UP, DOWN, STABLE
+  forecastedAt       DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, month])
+  @@index([tenantId])
+  @@index([tenantId, month])
+  @@map("financial_forecasts")
+}
+
+// Bank Reconciliation Model (Financial Management)
+model BankReconciliation {
+  id              String   @id @default(uuid())
+  tenantId        String
+  bankAccount     String
+  statementDate   DateTime
+  statementBalance Decimal  @db.Decimal(10, 2)
+  bookBalance     Decimal  @db.Decimal(10, 2)
+  difference      Decimal  @db.Decimal(10, 2)
+  transactions    Json     // Array of transactions
+  reconciled      Boolean  @default(false)
+  reconciledAt    DateTime?
+  reconciledBy    String?  // User ID
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, bankAccount])
+  @@index([tenantId, reconciled])
+  @@index([tenantId, statementDate])
+  @@map("bank_reconciliations")
+}
+
+// Customer Feedback Model (Customer Engagement)
+model CustomerFeedback {
+  id          String   @id @default(uuid())
+  tenantId    String
+  customerId  String
+  orderId     String?  // Optional: link to order
+  rating      Int      // 1-5 stars
+  comment     String?  @db.Text
+  category    String?  // PRODUCT, SERVICE, DELIVERY, OTHER
+  isPublic    Boolean  @default(false)
+  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  respondedAt DateTime?
+  response     String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, status])
+  @@index([tenantId, rating])
+  @@map("customer_feedbacks")
+}
+
+// Customer Review Model (Customer Engagement)
+model CustomerReview {
+  id          String   @id @default(uuid())
+  tenantId    String
+  customerId  String
+  productId   String?  // Optional: product review
+  orderId     String?  // Optional: link to order
+  rating      Int      // 1-5 stars
+  title       String?
+  comment     String?  @db.Text
+  isVerified  Boolean  @default(false) // Verified purchase
+  isPublic    Boolean  @default(true)
+  helpfulCount Int     @default(0)
+  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  respondedAt DateTime?
+  response     String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product  Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, productId])
+  @@index([tenantId, status])
+  @@index([tenantId, rating])
+  @@map("customer_reviews")
+}

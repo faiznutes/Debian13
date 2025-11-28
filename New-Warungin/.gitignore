@@ -1,0 +1,132 @@
+# Dependencies
+node_modules/
+**/node_modules/
+# package-lock.json - Keep this for Docker builds
+# package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# Build outputs
+dist/
+build/
+**/dist/
+**/build/
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+pnpm-debug.log*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+postgres_data/
+redis_data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+tasks.json
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+desktop.ini
+
+# Testing
+coverage/
+.nyc_output/
+*.lcov
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+.temp/
+
+# Docker
+docker-compose.override.yml
+# .dockerignore - Keep this file, it's needed for Docker builds
+
+# SSL Certificates
+*.pem
+*.key
+*.crt
+*.cert
+nginx/ssl/*
+
+# Prisma
+prisma/migrations/*.sql
+!prisma/migrations/migration_lock.toml
+
+# Scripts output
+*.sh.log
+
+# Exclude all .sh and .md files (except essential ones)
+*.sh
+!scripts/docker-startup.sh
+!scripts/create-super-admin-docker.js
+*.md
+!README.md
+!docs/**/*.md
+!setup-cloudflare-tunnel.md
+!CLOUDFLARE_TROUBLESHOOTING.md
+
+# Exclude all .bat and .ps1 files
+*.bat
+*.ps1
+
+# Exclude all .txt files (except essential)
+*.txt
+!env.example
+!client/public/robots.txt
+!public/.well-known/security.txt
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.rar
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Local development
+.local/
+local/
+
+# Monitoring (jika tidak ingin di-commit)
+monitoring/prometheus/data/
+monitoring/grafana/data/
+
+# Nginx logs
+nginx/logs/*.log
+
+# Client build artifacts
+client/dist/
+client/.vite/
+

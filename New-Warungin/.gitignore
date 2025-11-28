@@ -84,15 +84,24 @@ prisma/migrations/*.sql
 # Scripts output
 *.sh.log
 
-# Exclude all .sh and .md files (except essential ones)
+# Exclude ALL .sh and .md files (except essential ones)
 *.sh
 !scripts/docker-startup.sh
-!scripts/create-super-admin-docker.js
 *.md
 !README.md
 !docs/**/*.md
 !setup-cloudflare-tunnel.md
 !CLOUDFLARE_TROUBLESHOOTING.md
+
+# Exclude all documentation and script files
+**/*.md
+!README.md
+!docs/**/*.md
+!setup-cloudflare-tunnel.md
+!CLOUDFLARE_TROUBLESHOOTING.md
+
+**/*.sh
+!scripts/docker-startup.sh
 
 # Exclude all .bat and .ps1 files
 *.bat

@@ -1,0 +1,192 @@
+# Docker Compose untuk Warungin POS System
+# Remove version (obsolete in Docker Compose v2+)
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: warungin-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-warungin}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - warungin-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Tidak expose port ke host untuk security (hanya internal Docker network)
+
+  # Redis Cache (Optional)
+  redis:
+    image: redis:7-alpine
+    container_name: warungin-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - warungin-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - with-redis
+
+  # Backend Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: warungin-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-warungin}?schema=public
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
+      - MIDTRANS_MERCHANT_ID=${MIDTRANS_MERCHANT_ID}
+      - MIDTRANS_SERVER_KEY=${MIDTRANS_SERVER_KEY}
+      - MIDTRANS_CLIENT_KEY=${MIDTRANS_CLIENT_KEY}
+      - MIDTRANS_IS_PRODUCTION=${MIDTRANS_IS_PRODUCTION:-false}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SMTP_FROM=${SMTP_FROM}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - BACKEND_URL=${BACKEND_URL}
+      - CORS_ORIGIN=${CORS_ORIGIN}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    networks:
+      - warungin-network
+    volumes:
+      - ./logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${FRONTEND_URL}/api
+    container_name: warungin-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - warungin-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: warungin-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/logs:/var/log/nginx
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_started
+    networks:
+      - warungin-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:80 || curl -f http://localhost:80 || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Cloudflare Tunnel - untuk public access via Cloudflare
+  # Setup: 
+  # 1. Buat tunnel di Cloudflare Dashboard (Zero Trust > Networks > Tunnels)
+  # 2. Copy TUNNEL_TOKEN dan set di .env file
+  # 3. Configure Public Hostname: http://nginx:80 (jika di Docker) atau http://localhost:80 (jika di host)
+  # 4. Jalankan dengan: docker compose --profile cloudflare up -d cloudflared
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: warungin-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks:
+      - warungin-network
+    depends_on:
+      nginx:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - cloudflare
+    # Note: 
+    # - Service URL di Cloudflare Dashboard: http://nginx:80 (jika di Docker network)
+    # - Atau: http://host.docker.internal:80 (jika perlu akses host)
+    # - Atau: http://localhost:80 (jika cloudflared di host network - tidak recommended)
+    # Aktifkan dengan: docker compose --profile cloudflare up -d cloudflared
+    # Domain: pos.faiznute.site
+    # Troubleshooting: Lihat CLOUDFLARE_TROUBLESHOOTING.md
+    # Note: Changed depends_on to service_started instead of service_healthy untuk avoid dependency issues
+
+networks:
+  warungin-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+

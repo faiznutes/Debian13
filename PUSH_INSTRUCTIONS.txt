@@ -1,0 +1,53 @@
+================================================================================
+  PUSH KE GITHUB - INSTRUKSI
+================================================================================
+
+Karena terminal bermasalah, silakan jalankan salah satu command berikut:
+
+OPTION 1: Menggunakan Git Bash atau Terminal
+---------------------------------------------
+Jalankan command berikut:
+
+git add Dockerfile.backend client/Dockerfile update-docker.sh build-docker-retry.sh DOCKER_NETWORK_TIMEOUT_FIX.md UPDATE_DOCKER.md push-fix-network-timeout.sh PUSH_NOW.md push-to-github.ps1 push-now.bat QUICK_PUSH.sh
+
+git commit -m "Fix: Docker network timeout issue - Add npm retry logic and timeout configuration" -m "- Add npm config for longer timeout (5 minutes) and retry mechanism" -m "- Add retry logic for npm install and npx prisma generate" -m "- Update Dockerfile.backend and client/Dockerfile with network handling" -m "- Add build-docker-retry.sh script for build with retry" -m "- Add update-docker.sh with retry logic for VPS deployment" -m "- Add documentation: DOCKER_NETWORK_TIMEOUT_FIX.md and UPDATE_DOCKER.md"
+
+git push origin main
+
+
+OPTION 2: Menggunakan Script Batch (Windows)
+--------------------------------------------
+Double-click file: push-now.bat
+
+
+OPTION 3: Menggunakan PowerShell Script
+----------------------------------------
+Jalankan di PowerShell:
+.\push-to-github.ps1
+
+
+OPTION 4: Menggunakan Bash Script
+----------------------------------
+Jalankan di Git Bash:
+bash QUICK_PUSH.sh
+
+
+OPTION 5: Menggunakan Script Auto
+---------------------------------
+Jalankan di Git Bash:
+bash push-to-github-auto.sh
+
+
+================================================================================
+  SETELAH PUSH, UPDATE DI VPS
+================================================================================
+
+Setelah push berhasil, jalankan di VPS:
+
+ssh warungin@192.168.0.101 'cd /home/warungin/Warungin && git pull origin main && docker compose down && docker compose build && docker compose up -d'
+
+Atau gunakan script:
+bash update-docker.sh
+
+================================================================================
+
